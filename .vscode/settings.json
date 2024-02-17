@@ -1,0 +1,8 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./programs/dex/Cargo.toml",
+        "./programs/dex/Cargo.toml",
+        "./programs/dex/Cargo.toml"
+    ],
+    "rust-analyzer.showUnlinkedFileNotification": false
+}
