@@ -1,47 +1,30 @@
+use crate::{errors::DexProgramError, state::*};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
     token::{Mint, Token, TokenAccount},
 };
 
-use crate::{
-    errors::DexProgramError,
-    state::{LiquidityPool, LiquidityPoolAccount},
-};
-
-pub fn add_liquidity(ctx: Context<AddLiquidity>, amount_one: u64, amount_two: u64) -> Result<()> {
+pub fn create_liquidity_pool(ctx: Context<CreateLiquidityPool>) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
 
-    let token_one_accounts = (
-        &mut ctx.accounts.mint_token_one,
-        &mut ctx.accounts.pool_token_account_one,
-        &mut ctx.accounts.user_token_account_one,
-    );
-
-    let token_two_accounts = (
-        &mut ctx.accounts.mint_token_two,
-        &mut ctx.accounts.pool_token_account_two,
-        &mut ctx.accounts.user_token_account_two,
-    );
-
-    pool.add_liquidity(
-        token_one_accounts,
-        token_two_accounts,
-        amount_one,
-        amount_two,
-        &ctx.accounts.payer,
-        &ctx.accounts.token_program,
-    )?;
+    pool.set_inner(LiquidityPool::new(
+        ctx.accounts.mint_token_one.key(),
+        ctx.accounts.mint_token_two.key(),
+        ctx.bumps.pool,
+    ));
 
     Ok(())
 }
 
 #[derive(Accounts)]
-pub struct AddLiquidity<'info> {
+pub struct CreateLiquidityPool<'info> {
     #[account(
-        mut,
+        init,
+        space = LiquidityPool::ACCOUNT_SIZE,
+        payer = payer,
         seeds = [LiquidityPool::POOL_SEED_PREFIX.as_bytes(), LiquidityPool::generate_seed(mint_token_one.key(), mint_token_two.key()).as_bytes()],
-        bump = pool.bump
+        bump
     )]
     pub pool: Account<'info, LiquidityPool>,
 
@@ -56,32 +39,20 @@ pub struct AddLiquidity<'info> {
     pub mint_token_two: Account<'info, Mint>,
 
     #[account(
-        mut,
+        init,
+        payer = payer,
         associated_token::mint = mint_token_one,
         associated_token::authority = pool
     )]
     pub pool_token_account_one: Account<'info, TokenAccount>,
 
     #[account(
-        mut,
+        init,
+        payer = payer,
         associated_token::mint = mint_token_two,
         associated_token::authority = pool
     )]
     pub pool_token_account_two: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        associated_token::mint = mint_token_one,
-        associated_token::authority = payer,
-    )]
-    pub user_token_account_one: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        associated_token::mint = mint_token_two,
-        associated_token::authority = payer,
-    )]
-    pub user_token_account_two: Account<'info, TokenAccount>,
 
     #[account(mut)]
     pub payer: Signer<'info>,
