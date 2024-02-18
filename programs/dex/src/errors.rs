@@ -11,6 +11,9 @@ pub enum DexProgramError {
     #[msg("Failed to add liquidity")]
     FailedToAddLiquidity,
 
+    #[msg("Failed to remove liquidity")]
+    FailedToRemoveLiquidity,
+
     #[msg("Overflow or underflow occured")]
     OverflowOrUnderflowOccurred,
 }

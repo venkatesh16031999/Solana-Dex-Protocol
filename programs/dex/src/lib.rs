@@ -25,8 +25,8 @@ pub mod dex {
         instructions::add_liquidity(ctx, amount_one, amount_two)
     }
 
-    pub fn remove_liquidity(ctx: Context<RemoveLiquidity>) -> Result<()> {
-        instructions::remove_liquidity(ctx)
+    pub fn remove_liquidity(ctx: Context<RemoveLiquidity>, shares: u64) -> Result<()> {
+        instructions::remove_liquidity(ctx, shares)
     }
 
     pub fn swap(ctx: Context<Swap>) -> Result<()> {

@@ -67,6 +67,22 @@ pub trait LiquidityPoolAccount<'info> {
         token_program: &Program<'info, Token>,
     ) -> Result<()>;
 
+    fn remove_liquidity(
+        &mut self,
+        token_one_accounts: (
+            &mut Account<'info, Mint>,
+            &mut Account<'info, TokenAccount>,
+            &mut Account<'info, TokenAccount>,
+        ),
+        token_two_accounts: (
+            &mut Account<'info, Mint>,
+            &mut Account<'info, TokenAccount>,
+            &mut Account<'info, TokenAccount>,
+        ),
+        shares: u64,
+        token_program: &Program<'info, Token>,
+    ) -> Result<()>;
+
     fn transfer_token_from_pool(
         &self,
         from: &Account<'info, TokenAccount>,
@@ -211,6 +227,74 @@ impl<'info> LiquidityPoolAccount<'info> for Account<'info, LiquidityPool> {
             token_program,
         )?;
 
+        Ok(())
+    }
+
+    fn remove_liquidity(
+        &mut self,
+        token_one_accounts: (
+            &mut Account<'info, Mint>,
+            &mut Account<'info, TokenAccount>,
+            &mut Account<'info, TokenAccount>,
+        ),
+        token_two_accounts: (
+            &mut Account<'info, Mint>,
+            &mut Account<'info, TokenAccount>,
+            &mut Account<'info, TokenAccount>,
+        ),
+        shares: u64,
+        token_program: &Program<'info, Token>,
+    ) -> Result<()> {
+        if shares <= 0 {
+            return err!(DexProgramError::FailedToRemoveLiquidity);
+        }
+
+        let mul_value = shares
+            .checked_mul(self.reserve_one)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        let amount_out_one = mul_value
+            .checked_div(self.total_supply)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        let mul_value = shares
+            .checked_mul(self.reserve_two)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        let amount_out_two = mul_value
+            .checked_div(self.total_supply)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        if amount_out_one <= 0 || amount_out_two <= 0 {
+            return err!(DexProgramError::FailedToRemoveLiquidity);
+        }
+
+        self.remove_shares(shares)?;
+
+        let new_reserves_one = self
+            .reserve_one
+            .checked_sub(amount_out_one)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+        let new_reserves_two = self
+            .reserve_two
+            .checked_sub(amount_out_two)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        self.update_reserves(new_reserves_one, new_reserves_two)?;
+
+        self.transfer_token_from_pool(
+            token_one_accounts.1,
+            token_one_accounts.2,
+            amount_out_one,
+            token_program,
+        )?;
+
+        self.transfer_token_from_pool(
+            token_two_accounts.1,
+            token_two_accounts.2,
+            amount_out_two,
+            token_program,
+        )?;
         Ok(())
     }
 
