@@ -26,17 +26,17 @@ pub struct CreateLiquidityPool<'info> {
         seeds = [LiquidityPool::POOL_SEED_PREFIX.as_bytes(), LiquidityPool::generate_seed(mint_token_one.key(), mint_token_two.key()).as_bytes()],
         bump
     )]
-    pub pool: Account<'info, LiquidityPool>,
+    pub pool: Box<Account<'info, LiquidityPool>>,
 
     #[account(
         constraint = !mint_token_one.key().eq(&mint_token_two.key()) @ DexProgramError::DuplicateTokenNotAllowed
     )]
-    pub mint_token_one: Account<'info, Mint>,
+    pub mint_token_one: Box<Account<'info, Mint>>,
 
     #[account(
         constraint = !mint_token_one.key().eq(&mint_token_two.key()) @ DexProgramError::DuplicateTokenNotAllowed
     )]
-    pub mint_token_two: Account<'info, Mint>,
+    pub mint_token_two: Box<Account<'info, Mint>>,
 
     #[account(
         init,
@@ -44,7 +44,7 @@ pub struct CreateLiquidityPool<'info> {
         associated_token::mint = mint_token_one,
         associated_token::authority = pool
     )]
-    pub pool_token_account_one: Account<'info, TokenAccount>,
+    pub pool_token_account_one: Box<Account<'info, TokenAccount>>,
 
     #[account(
         init,
@@ -52,7 +52,7 @@ pub struct CreateLiquidityPool<'info> {
         associated_token::mint = mint_token_two,
         associated_token::authority = pool
     )]
-    pub pool_token_account_two: Account<'info, TokenAccount>,
+    pub pool_token_account_two: Box<Account<'info, TokenAccount>>,
 
     #[account(mut)]
     pub payer: Signer<'info>,

@@ -1,16 +1,46 @@
 use crate::errors::DexProgramError;
+use crate::helpers::convert_from_float;
 use crate::helpers::convert_to_float;
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
 use std::cmp;
+use std::ops::Div;
 use std::ops::Mul;
+use std::ops::Sub;
+
+#[account]
+pub struct DexConfiguration {
+    pub fees: f64,
+}
+
+impl DexConfiguration {
+    pub const SEED: &'static str = "DexConfiguration";
+
+    // Discriminator (8) + f64 (8)
+    pub const ACCOUNT_SIZE: usize = 8 + 32 + 8;
+
+    pub fn new(fees: f64) -> Self {
+        Self { fees }
+    }
+}
+
+#[account]
+pub struct LiquidityProvider {
+    pub shares: u64,
+}
+
+impl LiquidityProvider {
+    pub const SEED_PREFIX: &'static str = "LiqudityProvider";
+
+    // Discriminator (8) + f64 (8)
+    pub const ACCOUNT_SIZE: usize = 8 + 8;
+}
 
 #[account]
 pub struct LiquidityPool {
     pub token_one: Pubkey,
     pub token_two: Pubkey,
-    pub shares: u64,
     pub total_supply: u64,
     pub reserve_one: u64,
     pub reserve_two: u64,
@@ -20,8 +50,9 @@ pub struct LiquidityPool {
 impl LiquidityPool {
     pub const POOL_SEED_PREFIX: &'static str = "liquidity_pool";
 
-    // Discriminator (8) + Pubkey (32) + Pubkey (32) + Shares (8) + Bump (1)
-    pub const ACCOUNT_SIZE: usize = 8 + 32 + 32 + 8 + 1;
+    // Discriminator (8) + Pubkey (32) + Pubkey (32) + totalsupply (8)
+    // + reserve one (8) + reserve two (8) + Bump (1)
+    pub const ACCOUNT_SIZE: usize = 8 + 32 + 32 + 8 + 8 + 8 + 1;
 
     pub fn generate_seed(token_one: Pubkey, token_two: Pubkey) -> String {
         if token_one > token_two {
@@ -35,7 +66,6 @@ impl LiquidityPool {
         Self {
             token_one: token_one,
             token_two: token_two,
-            shares: 0_u64,
             total_supply: 0_u64,
             reserve_one: 0_u64,
             reserve_two: 0_u64,
@@ -45,8 +75,16 @@ impl LiquidityPool {
 }
 
 pub trait LiquidityPoolAccount<'info> {
-    fn grant_shares(&mut self, shares: u64) -> Result<()>;
-    fn remove_shares(&mut self, shares: u64) -> Result<()>;
+    fn grant_shares(
+        &mut self,
+        liquidity_provider_account: &mut Account<'info, LiquidityProvider>,
+        hares: u64,
+    ) -> Result<()>;
+    fn remove_shares(
+        &mut self,
+        liquidity_provider_account: &mut Account<'info, LiquidityProvider>,
+        shares: u64,
+    ) -> Result<()>;
     fn update_reserves(&mut self, reserve_one: u64, reserve_two: u64) -> Result<()>;
 
     fn add_liquidity(
@@ -63,6 +101,7 @@ pub trait LiquidityPoolAccount<'info> {
         ),
         amount_one: u64,
         amount_two: u64,
+        liquidity_provider_account: &mut Account<'info, LiquidityProvider>,
         authority: &Signer<'info>,
         token_program: &Program<'info, Token>,
     ) -> Result<()>;
@@ -80,6 +119,26 @@ pub trait LiquidityPoolAccount<'info> {
             &mut Account<'info, TokenAccount>,
         ),
         shares: u64,
+        liquidity_provider_account: &mut Account<'info, LiquidityProvider>,
+        authority: &Signer<'info>,
+        token_program: &Program<'info, Token>,
+    ) -> Result<()>;
+
+    fn swap(
+        &mut self,
+        dex_configuration_account: &Account<'info, DexConfiguration>,
+        token_one_accounts: (
+            &mut Account<'info, Mint>,
+            &mut Account<'info, TokenAccount>,
+            &mut Account<'info, TokenAccount>,
+        ),
+        token_two_accounts: (
+            &mut Account<'info, Mint>,
+            &mut Account<'info, TokenAccount>,
+            &mut Account<'info, TokenAccount>,
+        ),
+        amount: u64,
+        authority: &Signer<'info>,
         token_program: &Program<'info, Token>,
     ) -> Result<()>;
 
@@ -116,11 +175,15 @@ pub trait LiquidityPoolAccount<'info> {
 }
 
 impl<'info> LiquidityPoolAccount<'info> for Account<'info, LiquidityPool> {
-    fn grant_shares(&mut self, shares: u64) -> Result<()> {
-        self.shares = self
+    fn grant_shares(
+        &mut self,
+        liquidity_provider_account: &mut Account<'info, LiquidityProvider>,
+        shares: u64,
+    ) -> Result<()> {
+        liquidity_provider_account.shares = liquidity_provider_account
             .shares
-            .checked_sub(shares)
-            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+            .checked_add(shares)
+            .ok_or(DexProgramError::FailedToAllocateShares)?;
 
         self.total_supply = self
             .total_supply
@@ -130,11 +193,15 @@ impl<'info> LiquidityPoolAccount<'info> for Account<'info, LiquidityPool> {
         Ok(())
     }
 
-    fn remove_shares(&mut self, shares: u64) -> Result<()> {
-        self.shares = self
+    fn remove_shares(
+        &mut self,
+        liquidity_provider_account: &mut Account<'info, LiquidityProvider>,
+        shares: u64,
+    ) -> Result<()> {
+        liquidity_provider_account.shares = liquidity_provider_account
             .shares
             .checked_sub(shares)
-            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+            .ok_or(DexProgramError::FailedToDeallocateShares)?;
 
         self.total_supply = self
             .total_supply
@@ -165,6 +232,7 @@ impl<'info> LiquidityPoolAccount<'info> for Account<'info, LiquidityPool> {
         ),
         amount_one: u64,
         amount_two: u64,
+        liquidity_provider_account: &mut Account<'info, LiquidityProvider>,
         authority: &Signer<'info>,
         token_program: &Program<'info, Token>,
     ) -> Result<()> {
@@ -198,7 +266,7 @@ impl<'info> LiquidityPoolAccount<'info> for Account<'info, LiquidityPool> {
             return err!(DexProgramError::FailedToAddLiquidity);
         }
 
-        self.grant_shares(shares_to_allocate)?;
+        self.grant_shares(liquidity_provider_account, shares_to_allocate)?;
 
         let new_reserves_one = self
             .reserve_one
@@ -243,10 +311,16 @@ impl<'info> LiquidityPoolAccount<'info> for Account<'info, LiquidityPool> {
             &mut Account<'info, TokenAccount>,
         ),
         shares: u64,
+        liquidity_provider_account: &mut Account<'info, LiquidityProvider>,
+        _authority: &Signer<'info>,
         token_program: &Program<'info, Token>,
     ) -> Result<()> {
         if shares <= 0 {
             return err!(DexProgramError::FailedToRemoveLiquidity);
+        }
+
+        if liquidity_provider_account.shares < shares {
+            return err!(DexProgramError::InsufficientShares);
         }
 
         let mul_value = shares
@@ -269,7 +343,7 @@ impl<'info> LiquidityPoolAccount<'info> for Account<'info, LiquidityPool> {
             return err!(DexProgramError::FailedToRemoveLiquidity);
         }
 
-        self.remove_shares(shares)?;
+        self.remove_shares(liquidity_provider_account, shares)?;
 
         let new_reserves_one = self
             .reserve_one
@@ -293,6 +367,84 @@ impl<'info> LiquidityPoolAccount<'info> for Account<'info, LiquidityPool> {
             token_two_accounts.1,
             token_two_accounts.2,
             amount_out_two,
+            token_program,
+        )?;
+        Ok(())
+    }
+
+    fn swap(
+        &mut self,
+        dex_configuration_account: &Account<'info, DexConfiguration>,
+        token_one_accounts: (
+            &mut Account<'info, Mint>,
+            &mut Account<'info, TokenAccount>,
+            &mut Account<'info, TokenAccount>,
+        ),
+        token_two_accounts: (
+            &mut Account<'info, Mint>,
+            &mut Account<'info, TokenAccount>,
+            &mut Account<'info, TokenAccount>,
+        ),
+        amount: u64,
+        authority: &Signer<'info>,
+        token_program: &Program<'info, Token>,
+    ) -> Result<()> {
+        if amount <= 0 {
+            return err!(DexProgramError::InvalidAmount);
+        }
+
+        // xy = k => Constant product formula
+        // (x + dx)(y - dy) = k
+        // y - dy = k / (x + dx)
+        // y - dy = xy / (x + dx)
+        // dy = y - (xy / (x + dx))
+        // dy = yx + ydx - xy / (x + dx)
+        // formula => dy = ydx / (x + dx)
+
+        let adjusted_amount_in_float = convert_to_float(amount, token_one_accounts.0.decimals)
+            .div(100_f64)
+            .mul(100_f64.sub(dex_configuration_account.fees));
+
+        let adjusted_amount =
+            convert_from_float(adjusted_amount_in_float, token_one_accounts.0.decimals);
+
+        let denominator_sum = self
+            .reserve_one
+            .checked_add(adjusted_amount)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        let numerator_mul = self
+            .reserve_two
+            .checked_mul(adjusted_amount)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        let amount_out = numerator_mul
+            .checked_div(denominator_sum)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        let new_reserves_one = self
+            .reserve_one
+            .checked_add(amount)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+        let new_reserves_two = self
+            .reserve_two
+            .checked_sub(amount_out)
+            .ok_or(DexProgramError::OverflowOrUnderflowOccurred)?;
+
+        self.update_reserves(new_reserves_one, new_reserves_two)?;
+
+        self.transfer_token_to_pool(
+            token_one_accounts.2,
+            token_one_accounts.1,
+            amount,
+            authority,
+            token_program,
+        )?;
+
+        self.transfer_token_from_pool(
+            token_two_accounts.1,
+            token_two_accounts.2,
+            amount_out,
             token_program,
         )?;
         Ok(())

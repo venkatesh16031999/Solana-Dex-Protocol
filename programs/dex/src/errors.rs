@@ -5,6 +5,21 @@ pub enum DexProgramError {
     #[msg("Insufficient funds to swap")]
     InsufficientFunds,
 
+    #[msg("Failed to allocate shares")]
+    FailedToAllocateShares,
+
+    #[msg("Failed to deallocate shares")]
+    FailedToDeallocateShares,
+
+    #[msg("Insufficient shares")]
+    InsufficientShares,
+
+    #[msg("Invalid amount to swap")]
+    InvalidAmount,
+
+    #[msg("Invalid fee")]
+    InvalidFee,
+
     #[msg("Duplicate tokens are not allowed")]
     DuplicateTokenNotAllowed,
 
